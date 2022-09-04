@@ -645,7 +645,7 @@ class T5Block(nn.Module):
         output_attentions=False,
         return_dict=True,
     ):
-
+        # Todo this is a block of T5 Pai. Every for-loop will come in this block.
         if past_key_value is not None:
             if not self.is_decoder:
                 logger.warning("`past_key_values` is passed to the encoder. Please make sure this is intended.")
@@ -904,6 +904,8 @@ class T5Stack(T5PreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
+        # Encoder and decoder will enter to this module.
+        # import ipdb; ipdb.set_trace() # decoder forward
         # Model parallel
         if self.model_parallel:
             torch.cuda.set_device(self.first_device)
@@ -920,6 +922,7 @@ class T5Stack(T5PreTrainedModel):
             raise ValueError(
                 f"You cannot specify both {err_msg_prefix}input_ids and {err_msg_prefix}inputs_embeds at the same time"
             )
+        # decoder enter
         elif input_ids is not None:
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
@@ -929,6 +932,7 @@ class T5Stack(T5PreTrainedModel):
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds")
 
+        # import ipdb; ipdb.set_trace()  # decoder sign value to embeddings
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
@@ -978,8 +982,12 @@ class T5Stack(T5PreTrainedModel):
         position_bias = None
         encoder_decoder_position_bias = None
 
+        # import ipdb; ipdb.set_trace()
+        # T5Stack 12 layers
+        # Here inputs_embeds transfer to hidden_states - Pai.
         hidden_states = self.dropout(inputs_embeds)
 
+        # This is the stack of t5block. - Pai
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1003,7 +1011,7 @@ class T5Stack(T5PreTrainedModel):
                     cross_attn_layer_head_mask = cross_attn_layer_head_mask.to(hidden_states.device)
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
-
+            # import ipdb; ipdb.set_trace()
             if self.gradient_checkpointing and self.training:
                 if use_cache:
                     logger.warning(
@@ -1016,6 +1024,7 @@ class T5Stack(T5PreTrainedModel):
                         return tuple(module(*inputs, use_cache, output_attentions))
 
                     return custom_forward
+
 
                 layer_outputs = checkpoint(
                     create_custom_forward(layer_module),
@@ -1091,6 +1100,7 @@ class T5Stack(T5PreTrainedModel):
                 ]
                 if v is not None
             )
+        # return this
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=present_key_value_states,
@@ -1553,6 +1563,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        decoder_prompt: Optional[int] = None,
+        use_decoder_prompt: Optional[bool] = None,
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -1585,6 +1597,9 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         >>> print(tokenizer.decode(outputs[0], skip_special_tokens=True))
         >>> # studies have shown that owning a dog is good for you.
         ```"""
+
+        # import ipdb; ipdb.set_trace()  # breakpoint ipdb
+        # Enter after model go through the T5Stack
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1621,6 +1636,10 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
+            # if use decoder_prompt. - Pai
+            if use_decoder_prompt:
+                assert len(decoder_prompt)==len(decoder_input_ids)
+                decoder_input_ids[...,0] = decoder_prompt
 
         # Set device for model parallelism
         if self.model_parallel:
@@ -1634,6 +1653,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
 
         # Decode
+        # import ipdb; ipdb.set_trace()
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,

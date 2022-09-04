@@ -475,6 +475,7 @@ class GenerationMixin:
         """
         return logits
 
+    # Todo Pai
     def _prepare_input_ids_for_generation(
         self, bos_token_id: Optional[int], encoder_outputs: Optional[ModelOutput]
     ) -> torch.LongTensor:
@@ -483,8 +484,11 @@ class GenerationMixin:
             shape = encoder_outputs.last_hidden_state.size()[:-1]
             return torch.ones(shape, dtype=torch.long, device=self.device) * -100
 
+        # put it aside? -Pai
         if bos_token_id is None:
             raise ValueError("`bos_token_id` has to be defined when no `input_ids` are provided.")
+        # return torch.ones((1, 1), dtype=torch.long, device=self.device) * bos_token_id
+        # change the decoder prompt
         return torch.ones((1, 1), dtype=torch.long, device=self.device) * bos_token_id
 
     def _prepare_attention_mask_for_generation(
@@ -507,6 +511,8 @@ class GenerationMixin:
     def _prepare_encoder_decoder_kwargs_for_generation(
         self, inputs_tensor: torch.Tensor, model_kwargs, model_input_name: Optional[str] = None
     ) -> Dict[str, Any]:
+        # import ipdb; ipdb.set_trace()
+        # The first T5Stack is encoder and only prepare the arguments for encoder.
         # 1. get encoder
         encoder = self.get_encoder()
 
@@ -907,6 +913,8 @@ class GenerationMixin:
         remove_invalid_values: Optional[bool] = None,
         synced_gpus: Optional[bool] = False,
         exponential_decay_length_penalty: Optional[Tuple[Union[int, float]]] = None,
+        decoder_prompt: Optional[int] = None,
+        use_decoder_prompt: Optional[bool] = None,
         **model_kwargs,
     ) -> Union[GreedySearchOutput, SampleOutput, BeamSearchOutput, BeamSampleOutput, torch.LongTensor]:
         r"""
@@ -1139,11 +1147,12 @@ class GenerationMixin:
         >>> sentence = "Paris is one of the densest populated areas in Europe."
         >>> input_ids = tokenizer(sentence, return_tensors="pt").input_ids
 
-        >>> outputs = model.generate(input_ids, num_beams=5)
+        >>> outputs = model.generate(input_ids)
         >>> tokenizer.batch_decode(outputs, skip_special_tokens=True)
         ['Paris ist eines der dichtesten besiedelten Gebiete Europas.']
         ```"""
         # 0. Validate model kwargs
+        # import ipdb; ipdb.set_trace()
         self._validate_model_kwargs(model_kwargs.copy())
 
         # 1. Set generation parameters if not already defined
@@ -1205,22 +1214,28 @@ class GenerationMixin:
         if self.config.is_encoder_decoder and "encoder_outputs" not in model_kwargs:
             # if model is encoder decoder encoder_outputs are created
             # and added to `model_kwargs`
+            # Get encoder output.
             model_kwargs = self._prepare_encoder_decoder_kwargs_for_generation(
                 inputs_tensor, model_kwargs, model_input_name
             )
 
         # 4. Prepare `input_ids` which will be used for auto-regressive generation
         if self.config.is_encoder_decoder:
-            input_ids = self._prepare_decoder_input_ids_for_generation(
-                batch_size,
-                decoder_start_token_id=decoder_start_token_id,
-                bos_token_id=bos_token_id,
-                model_kwargs=model_kwargs,
-                device=inputs_tensor.device,
-            )
+            # use decoder prompt when T5 decoding
+            if use_decoder_prompt:
+                input_ids = decoder_prompt
+            else:
+                input_ids = self._prepare_decoder_input_ids_for_generation(
+                    batch_size,
+                    decoder_start_token_id=decoder_start_token_id,
+                    bos_token_id=bos_token_id,
+                    model_kwargs=model_kwargs,
+                    device=inputs_tensor.device,
+                )
         else:
             # if decoder-only then inputs_tensor has to be `input_ids`
             input_ids = inputs_tensor
+        # 4.1 modified by Pai.
 
         # 5. Prepare `max_length` depending on other stopping criteria.
         input_ids_seq_length = input_ids.shape[-1]
@@ -1316,7 +1331,9 @@ class GenerationMixin:
                     f"num_return_sequences has to be 1, but is {num_return_sequences} when doing greedy search."
                 )
 
+            # We use greedy here, if we use other mode, we should change the code. (But I changed the inputs_ids.) - Pai
             # 10. run greedy search
+            # import ipdb; ipdb.set_trace()
             return self.greedy_search(
                 input_ids,
                 logits_processor=logits_processor,
@@ -1635,7 +1652,7 @@ class GenerationMixin:
         >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
         >>> model = AutoModelForCausalLM.from_pretrained("gpt2")
 
-        >>> # set pad_token_id to eos_token_id because GPT2 does not have a PAD token
+        >>> # set pad_token_id to eos_token_id because GPT2 does not have a EOS token
         >>> model.config.pad_token_id = model.config.eos_token_id
 
         >>> input_prompt = "It might be possible to"
@@ -1690,6 +1707,7 @@ class GenerationMixin:
                 model_kwargs["encoder_outputs"].get("hidden_states") if output_hidden_states else None
             )
 
+        # import ipdb; ipdb.set_trace()
         # keep track of which sequences are already finished
         unfinished_sequences = input_ids.new(input_ids.shape[0]).fill_(1)
         cur_len = input_ids.shape[-1]
@@ -1711,6 +1729,10 @@ class GenerationMixin:
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
             # forward pass to get next token
+            # Todo Pai predict next words.
+            # Debug result the first output is 32099, which means the <extra_id_0>.
+            # torch.argmax(outputs["logits"], dim=-1)
+            # In this way, we can check if we continue predict.
             outputs = self(
                 **model_inputs,
                 return_dict=True,
